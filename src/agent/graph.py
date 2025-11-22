@@ -37,7 +37,8 @@ load_dotenv()
 # # Pre-requisties and variables
 
 QWEN = "qwen/qwen3-vl-235b-a22b-instruct"
-OPENAI = "gpt-4.1-mini"
+# OPENAI = "gpt-4.1-mini"
+DEEPSEEK = "deepseek-chat"
 
 TAVILY_API_KEY = os.environ.get('TAVILY_API_KEY')
 
@@ -55,9 +56,17 @@ LOGS_DIR.mkdir(exist_ok=True)
 #     temperature=0.1,
 # )
 
-# OpenAI LLM
+# # # OpenAI LLM
+# llm = ChatOpenAI(
+#     model=OPENAI,
+#     temperature=0.1,
+# )
+
+# # DEEPSEEK LLM
 llm = ChatOpenAI(
-    model=OPENAI,
+    api_key=os.environ.get("DEEPSEEK_API_KEY", "n/a"),
+    base_url="https://api.deepseek.com",
+    model=DEEPSEEK,
     temperature=0.1,
 )
 
