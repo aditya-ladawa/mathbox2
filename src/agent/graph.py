@@ -137,7 +137,8 @@ def pre_warm_mcp_in_background():
     thread.start()
 
 
-# Agent node - calls LLM with tools
+## ## React Agent
+#  # Agent node - calls LLM with tools
 async def call_agent(state: MessagesState):
     """Call the agent with tools."""
     tools = await get_mcp_tools()
@@ -185,11 +186,14 @@ def build_graph():
     return workflow.compile()
 
 
+
+
+## ## Expose the graph
+
 # Pre-warm MCP connections in background when module loads
 # This makes the first request faster and separates init logs from request logs
 pre_warm_mcp_in_background()
 
-# Export - no async at module level!
 graph = build_graph()
 
 
