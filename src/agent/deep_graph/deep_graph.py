@@ -45,17 +45,53 @@ WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)  # Create if doesn't exist
 
 # # MCP Client Configuration
 async def get_mcp_tools():
-    """Load MCP tools from mcp_server.py"""
-    mcp_server_path = str(Path(__file__).parent / "mcp_server.py")
+    """Load MCP tools from all configured servers.
     
+    Available MCP servers:
+    - manim_filesystem: File operations (list, read, write, edit, search, find, execute)
+    - manim_docs: Qdrant vector search for Manim documentation
+    - wikipedia: Wikipedia article search and retrieval
+    - tavily: Web search for tutorials, Stack Overflow, etc.
+    """
+    # Get environment variables
+    tavily_api_key = os.environ.get("TAVILY_API_KEY")
+    
+    # Build MCP configuration
     mcp_config = {
+        # Filesystem tools
         "manim_filesystem": {
             "transport": "stdio",
             "command": "python",
-            "args": [mcp_server_path],
+            "args": [str(Path(__file__).parent / "file_mcp_server.py")],
             "env": os.environ.copy(),
-        }
+        },
+        # Manim documentation search (Qdrant)
+        "manim_docs": {
+            "transport": "stdio",
+            "command": "python",
+            "args": [str(Path(__file__).parent / "research_mcp_server.py")],
+            "env": os.environ.copy(),
+        },
     }
+    
+    # Add Wikipedia if available
+    try:
+        mcp_config["wikipedia"] = {
+            "transport": "stdio",
+            "command": "wikipedia-mcp",
+            "args": ["--transport", "stdio"],
+        }
+    except Exception:
+        print("⚠️  Wikipedia MCP not available", file=sys.stderr)
+    
+    # Add Tavily if API key is available
+    if tavily_api_key:
+        mcp_config["tavily"] = {
+            "transport": "streamable_http",
+            "url": f"https://mcp.tavily.com/mcp/?tavilyApiKey={tavily_api_key}"
+        }
+    else:
+        print("⚠️  TAVILY_API_KEY not set - Tavily search unavailable", file=sys.stderr)
     
     client = MultiServerMCPClient(mcp_config)
     return await client.get_tools()
