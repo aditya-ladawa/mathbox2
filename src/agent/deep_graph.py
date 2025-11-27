@@ -15,10 +15,10 @@ from typing_extensions import Annotated, NotRequired, TypedDict, Literal
 # # LangChain
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import BaseMessage, ToolMessage, HumanMessage, SystemMessage
-from langgraph.prebuilt.chat_agent_executor import AgentState
 from langchain_core.tools import InjectedToolCallId, tool
 from langgraph.prebuilt import InjectedState
 from langgraph.types import Command
+from langgraph.prebuilt.chat_agent_executor import AgentState
 
 
 # # LangChain MCP  
@@ -29,9 +29,60 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.prebuilt import ToolNode
 from langchain.agents import create_agent
 
+
+# Import from other py files
+from agent.task_tool import _create_task_tool
+from agent.prompts import (
+    MAIN_AGENT_PROMPT,
+    RESEARCHER_PROMPT,
+    CODER_PROMPT,
+    DEBUGGER_PROMPT,
+    get_today_str
+)
+from langgraph.prebuilt import create_react_agent
+
+
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+
+# # LLMs
+
+# # Main LLM (for all agents)
+llm = ChatOpenAI(
+    api_key=os.environ.get("DEEPSEEK_API_KEY", "n/a"),
+    base_url="https://api.deepseek.com",
+    model="deepseek-chat",
+    temperature=0.0,
+)
+
+
+# llm = ChatOpenAI(
+#     api_key=os.environ.get("OPENROUTER_API_KEY", "n/a"),
+#     base_url="https://openrouter.ai/api/v1",
+#     model="qwen/qwen3-next-80b-a3b-instruct",
+#     temperature=0.1,
+# )
+
+# # DeepSeek Reasoner for Think Tool
+
+# Note: DeepSeek removed reasoner model, using regular chat for now
+reasoner_llm = ChatOpenAI(
+    api_key=os.environ.get("DEEPSEEK_API_KEY", "n/a"),
+    base_url="https://api.deepseek.com",
+    model="deepseek-chat",  # Using chat model instead of reasoner
+    temperature=0.1,
+)
+
+
+# reasoner_llm = ChatOpenAI(
+#     api_key=os.environ.get("OPENROUTER_API_KEY", "n/a"),
+#     base_url="https://openrouter.ai/api/v1",
+#     model="qwen/qwen3-next-80b-a3b-instruct",
+#     temperature=0.1,
+# )
 
 
 # # Workspace Configuration
@@ -156,17 +207,14 @@ class Todo(TypedDict):
         content: Short, specific description of the task
         status: Current state - pending, in_progress, or completed
     """
-
     content: str
     status: Literal["pending", "in_progress", "completed"]
-    
 
 
 class DeepAgentState(AgentState):
-    """
-    Extend ReAct agent state with scratchpad and ACTUAL FileSystemBackend.
-    """
+    """Agent state with scratchpad (todos) for complex workflow tracking."""
     todos: NotRequired[list[Todo]]
+
     
 
 # # todo tools
@@ -224,3 +272,164 @@ def write_todos(
         }
     )
 
+
+
+@tool(parse_docstring=True)
+def think_strategically(reflection: str) -> str:
+    """Strategic planning and reflection tool using advanced reasoning.
+    
+    Use this for complex decision-making, planning, and reflection.
+    This is powered by a reasoning model that can think deeply about problems.
+    
+    When to use:
+    - After research: Plan animation structure
+    - Before coding: Design scene sequence
+    - When debugging: Analyze error patterns
+    - At decision points: Choose best approach
+    
+    Reflection should address:
+    1. Current situation - What have I learned/accomplished?
+    2. Analysis - What does this mean for the task?
+    3. Options - What are the possible next steps?
+    4. Decision - What's the best path forward?
+    
+    Args:
+        reflection: Your detailed reflection on current status and planning
+    """
+    try:
+        response = reasoner_llm.invoke([
+            SystemMessage(content="You are a strategic planning assistant. Analyze the situation and provide clear, actionable guidance. Be logical, concise, and talk in cold and sharp manner."),
+            HumanMessage(content=f"Reflect on this situation and provide strategic guidance:\n\n{reflection}")
+        ])
+        return f"💭 Strategic Analysis:\n\n{response.content}"
+    except Exception as e:
+        # Fallback if DeepSeek fails
+        return f"✅ Reflection recorded:\n{reflection}\n\n(Note: Advanced reasoning unavailable: {e})"
+
+
+# # Tool Loading Helper (Lazy)
+
+_mcp_tools_cache = None
+_mcp_tools_lock = threading.Lock()
+
+def get_all_tools():
+    """Get all MCP tools (cached, lazy-loaded).
+    
+    Tools are ONLY loaded when this function is called (during agent first use),
+    not during module import. This prevents blocking langgraph dev.
+    """
+    global _mcp_tools_cache
+    
+    if _mcp_tools_cache is not None:
+        return _mcp_tools_cache
+    
+    with _mcp_tools_lock:
+        if _mcp_tools_cache is not None:
+            return _mcp_tools_cache
+            
+        # Load tools synchronously (only on first actual use)
+        _mcp_tools_cache = asyncio.run(get_mcp_tools())
+        return _mcp_tools_cache
+
+
+# # Deep Agent Construction
+
+
+
+# Load all MCP tools
+print("📦 Loading MCP tools...")
+mcp_tools = get_all_tools()
+print(f"✅ Loaded {len(mcp_tools)} MCP tools")
+
+# State management tools
+state_tools = [read_todos, write_todos, think_strategically]
+
+# All tools available to sub-agents
+all_tools = mcp_tools + state_tools
+
+# Sub-Agent Configurations
+sub_agents = [
+    {
+        "name": "researcher",
+        "description": "Research Manim APIs and mathematical concepts. Returns FULL documentation (no summarization).",
+        "prompt": RESEARCHER_PROMPT.format(date=get_today_str()),
+        "tools": ["manim_docs_search", "search_wikipedia", "tavily_search", "think_strategically"]
+    },
+    {
+        "name": "coder",
+        "description": "Write clean, beautiful Manim animation code following style guide.",
+        "prompt": CODER_PROMPT,
+        "tools": ["write_file", "edit_file", "read_file", "list_files", "manim_docs_search", "find_files", "think_strategically"]
+    },
+    {
+        "name": "debugger",
+        "description": "Execute Manim renders, diagnose errors, and fix code systematically.",
+        "prompt": DEBUGGER_PROMPT,
+        "tools": ["execute_command", "read_file", "edit_file", "manim_docs_search", "tavily_search", "find_files", "think_strategically"]
+    }
+]
+
+print(f"🤖 Configuring {len(sub_agents)} sub-agents...")
+
+# Create task delegation tool
+task_tool = _create_task_tool(
+    tools=all_tools,
+    subagents=sub_agents,
+    model=llm,
+    state_schema=DeepAgentState
+)
+
+print("✅ Task delegation tool created")
+
+# Main agent tools (delegation + state management)
+main_agent_tools = [task_tool, read_todos, write_todos, think_strategically]
+
+
+from langgraph.checkpoint.memory import MemorySaver
+
+
+checkpointer = MemorySaver()
+
+# Create the main deep agent
+print("🧠 Building main deep agent...")
+deep_graph = create_react_agent(
+    llm,
+    tools=main_agent_tools,
+    prompt=MAIN_AGENT_PROMPT.format(date=get_today_str()),
+    state_schema=DeepAgentState,
+    # checkpointer=checkpointer,
+)
+
+print("✅ Deep agent ready!")
+print()
+print("Available sub-agents:")
+for agent in sub_agents:
+    print(f"  - {agent['name']}: {agent['description']}")
+print()
+
+__all__ = ["deep_graph", "DeepAgentState"]
+
+
+# # Test Main Function
+
+async def main():
+    """Test the deep agent with a simple query."""
+    inputs = {
+        "messages": [
+            ("user", "Please teach me newton's method of descent")
+        ]
+    }
+    
+    config = {"configurable": {"thread_id": "thread-1"}, "recursion_limit": 1000}
+    
+    print("\n" + "="*50)
+    print("🧪 Testing Deep Agent")
+    print("="*50 + "\n")
+    
+    async for event in deep_graph.astream(inputs, config=config, stream_mode="values"):
+        event["messages"][-1].pretty_print()
+
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())

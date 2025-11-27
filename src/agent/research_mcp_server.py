@@ -196,34 +196,6 @@ def manim_docs_search(
         return f"Error searching Manim docs: {e}"
 
 
-@mcp.tool()
-def think_about_manim(reflection: str) -> str:
-    """Strategic reflection tool for planning Manim animations.
-    
-    Use this to think through complex animation workflows before coding.
-    
-    When to use:
-    - After searching docs: What APIs did I find? Do I understand them?
-    - Before writing code: What's the logical sequence of animations?
-    - When debugging: What could be causing this error?
-    - Planning complexity: Do I need multiple scenes or one complex scene?
-    
-    Reflection should address:
-    1. **Understanding**: Do I have complete API knowledge needed?
-    2. **Planning**: What's the sequence of Manim objects and animations?
-    3. **Gaps**: What specific technical details am I missing?
-    4. **Decision**: Am I ready to write code or need more research?
-    
-    Args:
-        reflection: Your detailed thoughts on the animation plan
-        
-    Returns:
-        Confirmation that reflection was recorded
-
-    """
-    return f"✅ Reflection recorded:\n{reflection}"
-
-
 # Run MCP server if executed directly
 if __name__ == "__main__":
     mcp.run()

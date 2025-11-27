@@ -25,7 +25,7 @@ from langgraph.graph import StateGraph, END, MessagesState
 from langgraph.prebuilt import ToolNode
 
 # # .py Files
-from agent.prompts import (
+from agent.old_graph.prompts import (
     MANIM_AGENT_PROMPT,
 )
 

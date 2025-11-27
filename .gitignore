@@ -178,3 +178,10 @@ logs/
 
 # Manim files
 manim_workspace/
+
+
+# Test agents
+src/agent/test_*.py
+
+# Notebooks
+src/agent/4_full_agent.ipynb
