@@ -36,7 +36,6 @@ from agent.prompts import (
     MAIN_AGENT_PROMPT,
     RESEARCHER_PROMPT,
     CODER_PROMPT,
-    DEBUGGER_PROMPT,
     get_today_str
 )
 from langgraph.prebuilt import create_react_agent
@@ -50,21 +49,32 @@ load_dotenv()
 
 # # LLMs
 
-# # Main LLM (for all agents)
-llm = ChatOpenAI(
+# Main Orchestrator LLM (DeepSeek for strategic planning and delegation)
+main_llm = ChatOpenAI(
     api_key=os.environ.get("DEEPSEEK_API_KEY", "n/a"),
     base_url="https://api.deepseek.com",
     model="deepseek-chat",
+    temperature=0.1,
+)
+
+# Researcher LLM (Qwen for research)
+researcher_llm = ChatOpenAI(
+    api_key=os.environ.get("DEEPSEEK_API_KEY", "n/a"),
+    base_url="https://api.deepseek.com",
+    model="deepseek-chat",
+    temperature=0.5,
+)
+
+# Coding LLM (Qwen3-Coder-Plus for Manim code generation)
+coding_llm = ChatOpenAI(
+    api_key=os.environ.get("OPENROUTER_API_KEY", "n/a"),
+    base_url="https://openrouter.ai/api/v1",
+    model="qwen/qwen3-coder-plus",
     temperature=0.0,
 )
 
-
-# llm = ChatOpenAI(
-#     api_key=os.environ.get("OPENROUTER_API_KEY", "n/a"),
-#     base_url="https://openrouter.ai/api/v1",
-#     model="qwen/qwen3-next-80b-a3b-instruct",
-#     temperature=0.1,
-# )
+# Keep reference for backward compatibility
+llm = main_llm
 
 # # DeepSeek Reasoner for Think Tool
 
@@ -215,6 +225,10 @@ class DeepAgentState(AgentState):
     """Agent state with scratchpad (todos) for complex workflow tracking."""
     todos: NotRequired[list[Todo]]
 
+    scene_file: NotRequired[str]
+    scene_class: NotRequired[str]
+    research_notes_path: NotRequired[str]
+
     
 
 # # todo tools
@@ -276,37 +290,87 @@ def write_todos(
 
 @tool(parse_docstring=True)
 def think_strategically(reflection: str) -> str:
-    """Strategic planning and reflection tool using advanced reasoning.
-    
-    Use this for complex decision-making, planning, and reflection.
-    This is powered by a reasoning model that can think deeply about problems.
-    
+    """Tool for strategic reflection on research progress and decision-making.
+
+    Use this tool after each search to analyze results and plan next steps systematically.
+    This creates a deliberate pause in the research workflow for quality decision-making.
+
     When to use:
-    - After research: Plan animation structure
-    - Before coding: Design scene sequence
-    - When debugging: Analyze error patterns
-    - At decision points: Choose best approach
-    
+    - After receiving search results: What key information did I find?
+    - Before deciding next steps: Do I have enough to answer comprehensively?
+    - When assessing research gaps: What specific information am I still missing?
+    - Before concluding research: Can I provide a complete answer now?
+    - How complex is the question: Have I reached the number of search limits?
+
     Reflection should address:
-    1. Current situation - What have I learned/accomplished?
-    2. Analysis - What does this mean for the task?
-    3. Options - What are the possible next steps?
-    4. Decision - What's the best path forward?
-    
+    1. Analysis of current findings - What concrete information have I gathered?
+    2. Gap assessment - What crucial information is still missing?
+    3. Quality evaluation - Do I have sufficient evidence/examples for a good answer?
+    4. Strategic decision - Should I continue searching or provide my answer?
+
     Args:
-        reflection: Your detailed reflection on current status and planning
+        reflection: Your detailed reflection on research progress, findings, gaps, and next steps
+
+    Returns:
+        Confirmation that reflection was recorded for decision-making
     """
-    try:
-        response = reasoner_llm.invoke([
-            SystemMessage(content="You are a strategic planning assistant. Analyze the situation and provide clear, actionable guidance. Be logical, concise, and talk in cold and sharp manner."),
-            HumanMessage(content=f"Reflect on this situation and provide strategic guidance:\n\n{reflection}")
-        ])
-        return f"💭 Strategic Analysis:\n\n{response.content}"
-    except Exception as e:
-        # Fallback if DeepSeek fails
-        return f"✅ Reflection recorded:\n{reflection}\n\n(Note: Advanced reasoning unavailable: {e})"
+    return f"Reflection recorded: {reflection}"
 
 
+# # State Management tools
+@tool(parse_docstring=True)
+def set_research_notes_path(
+    path: str,
+    tool_call_id: Annotated[str, InjectedToolCallId],
+) -> Command:
+    """
+    Store the path to the research notes file in the agent state.
+
+    Use this after writing a notes file summarizing relevant Manim API usage,
+    math concepts, or planning information.
+
+    Args:
+        path: Absolute or virtual path to the notes file (e.g. "/assets/notes/fourier_intro.md")
+    """
+    return Command(
+        update={
+            "research_notes_path": path,
+            "messages": [
+                ToolMessage(
+                    f"Research notes path set to: {path}",
+                    tool_call_id=tool_call_id,
+                )
+            ],
+        }
+    )
+
+@tool(parse_docstring=True)
+def set_scene_metadata(
+    scene_file: str,
+    scene_class: str,
+    tool_call_id: Annotated[str, InjectedToolCallId],
+) -> Command:
+    """
+    Store the main Manim scene file and class name for the current project.
+
+    Use this right after creating or identifying the scene file and class.
+
+    Args:
+        scene_file: Full path to the scene Python file (e.g. "/scenes/complex_plane.py")
+        scene_class: Name of the scene class inside that file (e.g. "ComplexPlaneIntro")
+    """
+    return Command(
+        update={
+            "scene_file": scene_file,
+            "scene_class": scene_class,
+            "messages": [
+                ToolMessage(
+                    f"Scene metadata updated: file={scene_file}, class={scene_class}",
+                    tool_call_id=tool_call_id,
+                )
+            ],
+        }
+    )
 # # Tool Loading Helper (Lazy)
 
 _mcp_tools_cache = None
@@ -342,47 +406,52 @@ mcp_tools = get_all_tools()
 print(f"✅ Loaded {len(mcp_tools)} MCP tools")
 
 # State management tools
-state_tools = [read_todos, write_todos, think_strategically]
+state_tools = [read_todos, write_todos, think_strategically, set_research_notes_path, set_scene_metadata]
 
 # All tools available to sub-agents
 all_tools = mcp_tools + state_tools
 
-# Sub-Agent Configurations
+# Sub-Agent Configurations (researcher + coder)
 sub_agents = [
     {
         "name": "researcher",
         "description": "Research Manim APIs and mathematical concepts. Returns FULL documentation (no summarization).",
         "prompt": RESEARCHER_PROMPT.format(date=get_today_str()),
-        "tools": ["manim_docs_search", "search_wikipedia", "tavily_search", "think_strategically"]
+        "tools": ["manim_docs_search", "search_wikipedia", "tavily_search", "write_file", "read_file", "edit_file", "set_research_notes_path"]
     },
     {
         "name": "coder",
-        "description": "Write clean, beautiful Manim animation code following style guide.",
-        "prompt": CODER_PROMPT,
-        "tools": ["write_file", "edit_file", "read_file", "list_files", "manim_docs_search", "find_files", "think_strategically"]
-    },
-    {
-        "name": "debugger",
-        "description": "Execute Manim renders, diagnose errors, and fix code systematically.",
-        "prompt": DEBUGGER_PROMPT,
-        "tools": ["execute_command", "read_file", "edit_file", "manim_docs_search", "tavily_search", "find_files", "think_strategically"]
+        "description": "Write, test, and debug Manim animation code. Executes renders and manages workspace files.",
+        "prompt": CODER_PROMPT.format(date=get_today_str()),
+        "tools": ["list_files", "read_file", "write_file", "edit_file", "search_files", "find_files", "manim_docs_search", "execute_command", "set_scene_metadata"]
     }
 ]
 
 print(f"🤖 Configuring {len(sub_agents)} sub-agents...")
 
-# Create task delegation tool
+# Create task delegation tool with separate models for each agent type
 task_tool = _create_task_tool(
     tools=all_tools,
     subagents=sub_agents,
-    model=llm,
+    model=main_llm,  # Main orchestrator model (DeepSeek)
+    researcher_model=researcher_llm,  # Researcher model (DeepSeek)
+    coding_model=coding_llm,  # Coding model (Qwen3-Coder-Plus)
     state_schema=DeepAgentState
 )
 
 print("✅ Task delegation tool created")
 
-# Main agent tools (delegation + state management)
-main_agent_tools = [task_tool, read_todos, write_todos, think_strategically]
+# Get specific tools by name for main agent
+tools_by_name = {tool.name: tool for tool in mcp_tools}
+
+# Main agent tools (orchestration only: delegation and state management)
+main_agent_tools = [
+    # Delegation and state management only
+    task_tool, 
+    read_todos, 
+    write_todos, 
+    think_strategically,
+]
 
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -393,7 +462,7 @@ checkpointer = MemorySaver()
 # Create the main deep agent
 print("🧠 Building main deep agent...")
 deep_graph = create_react_agent(
-    llm,
+    main_llm,  # Use DeepSeek for main orchestrator agent
     tools=main_agent_tools,
     prompt=MAIN_AGENT_PROMPT.format(date=get_today_str()),
     state_schema=DeepAgentState,
@@ -402,9 +471,19 @@ deep_graph = create_react_agent(
 
 print("✅ Deep agent ready!")
 print()
-print("Available sub-agents:")
+print("Architecture: Deep Agent (3-agent system)")
+print(f"  Main Orchestrator: Has {len(main_agent_tools)} tools (delegation and planning only)")
+print(f"    Model: deepseek-chat")
+print("  Sub-agents:")
 for agent in sub_agents:
-    print(f"  - {agent['name']}: {agent['description']}")
+    if agent['name'] == "researcher":
+        model_name = "deepseek-chat"
+    elif agent['name'] == "coder":
+        model_name = "qwen/qwen3-coder-plus"
+    else:
+        model_name = "deepseek-chat"
+    print(f"    - {agent['name']}: {agent['description']}")
+    print(f"      Model: {model_name}")
 print()
 
 __all__ = ["deep_graph", "DeepAgentState"]
@@ -416,11 +495,11 @@ async def main():
     """Test the deep agent with a simple query."""
     inputs = {
         "messages": [
-            ("user", "Please teach me newton's method of descent")
+            ("user", "Can you explain me in detail on how Attention mechanism in transformer model.")
         ]
     }
     
-    config = {"configurable": {"thread_id": "thread-1"}, "recursion_limit": 1000}
+    config = {"configurable": {"thread_id": "thread-3"}, "recursion_limit": 1000}
     
     print("\n" + "="*50)
     print("🧪 Testing Deep Agent")

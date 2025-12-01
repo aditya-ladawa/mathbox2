@@ -26,7 +26,7 @@ class SubAgent(TypedDict):
     tools: NotRequired[list[str]]
 
 
-def _create_task_tool(tools, subagents: list[SubAgent], model, state_schema):
+def _create_task_tool(tools, subagents: list[SubAgent], model, state_schema, researcher_model=None, coding_model=None):
     """Create a task delegation tool that enables context isolation through sub-agents.
 
     This function implements the core pattern for spawning specialized sub-agents with
@@ -35,8 +35,10 @@ def _create_task_tool(tools, subagents: list[SubAgent], model, state_schema):
     Args:
         tools: List of available tools that can be assigned to sub-agents
         subagents: List of specialized sub-agent configurations
-        model: The language model to use for all agents
+        model: The language model to use for main/default agents
         state_schema: The state schema (typically DeepAgentState)
+        researcher_model: Optional separate model for researcher agent
+        coding_model: Optional separate model for coding/coder agent
 
     Returns:
         A 'task' tool that can delegate work to specialized sub-agents
@@ -59,9 +61,19 @@ def _create_task_tool(tools, subagents: list[SubAgent], model, state_schema):
         else:
             # Default to all tools
             _tools = tools
+        
+        # Select appropriate model based on agent type
+        if _agent["name"] == "researcher" and researcher_model:
+            agent_model = researcher_model
+        elif _agent["name"] == "coder" and coding_model:
+            agent_model = coding_model
+        else:
+            agent_model = model
+        
         agents[_agent["name"]] = create_react_agent(
-            model, prompt=_agent["prompt"], tools=_tools, state_schema=state_schema
+            agent_model, prompt=_agent["prompt"], tools=_tools, state_schema=state_schema
         )
+
 
     # Generate description of available sub-agents for the tool description
     other_agents_string = [
@@ -92,7 +104,7 @@ def _create_task_tool(tools, subagents: list[SubAgent], model, state_schema):
         state["messages"] = [{"role": "user", "content": description}]
 
         # Execute the sub-agent in isolation (async)
-        result = await sub_agent.ainvoke(state, config={"recursion_limit": 100})
+        result = await sub_agent.ainvoke(state, config={"recursion_limit": 1000})
 
         # Return results to parent agent via Command state update
         return Command(

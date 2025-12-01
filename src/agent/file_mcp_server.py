@@ -13,7 +13,7 @@ from datetime import datetime
 from fastmcp import FastMCP
 
 # # Workspace Configuration
-WORKSPACE_ROOT = Path(__file__).parent.parent.parent.parent / "manim_workspace"
+WORKSPACE_ROOT = Path("/home/aditya-ladawa/Aditya/z_projects/mathbox2/manim_workspace")
 WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
 
 # Create subdirectories
